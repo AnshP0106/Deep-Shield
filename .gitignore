@@ -12,8 +12,15 @@ node_modules/
 # VS Code
 .vscode/
 
-# Uploaded files
-backend/uploads/
+# Uploaded media
+Backend/uploads/images/*
+!Backend/uploads/images/.gitkeep
+
+Backend/uploads/videos/*
+!Backend/uploads/videos/.gitkeep
+
+Backend/uploads/audio/*
+!Backend/uploads/audio/.gitkeep
 
 # OS files
 .DS_Store
