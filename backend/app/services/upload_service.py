@@ -1,8 +1,8 @@
 from pathlib import Path
 import shutil
 import uuid
-
-from fastapi import UploadFile, HTTPException
+from app.services.metadata_service import extract_image_metadata
+from fastapi import UploadFile
 
 from app.core.config import (
     SUPPORTED_IMAGE_TYPES,
@@ -11,60 +11,54 @@ from app.core.config import (
     UPLOAD_DIRECTORIES
 )
 
+from app.exceptions.upload_exceptions import UnsupportedMediaTypeException
+
+
+def detect_media_type(content_type: str) -> str:
+    if content_type in SUPPORTED_IMAGE_TYPES:
+        return "image"
+
+    if content_type in SUPPORTED_VIDEO_TYPES:
+        return "video"
+
+    if content_type in SUPPORTED_AUDIO_TYPES:
+        return "audio"
+
+    raise UnsupportedMediaTypeException()
+
+
+def generate_unique_filename(original_filename: str) -> str:
+    extension = Path(original_filename).suffix
+    return f"{uuid.uuid4()}{extension}"
+
+
+def save_uploaded_file(file: UploadFile, destination: Path) -> None:
+    with open(destination, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
 
 def process_uploaded_media(file: UploadFile):
 
-    # -----------------------------
-    # Detect media type
-    # -----------------------------
+    media_type = detect_media_type(file.content_type)
 
-    if file.content_type in SUPPORTED_IMAGE_TYPES:
-        media_type = "image"
-
-    elif file.content_type in SUPPORTED_VIDEO_TYPES:
-        media_type = "video"
-
-    elif file.content_type in SUPPORTED_AUDIO_TYPES:
-        media_type = "audio"
-
-    else:
-        raise HTTPException(
-            status_code=400,
-            detail="Unsupported media type."
-        )
-
-    # -----------------------------
-    # Get upload directory
-    # -----------------------------
+    unique_filename = generate_unique_filename(file.filename)
 
     destination_folder = UPLOAD_DIRECTORIES[media_type]
 
-    # -----------------------------
-    # Generate unique filename
-    # -----------------------------
-
-    extension = Path(file.filename).suffix
-
-    unique_filename = f"{uuid.uuid4()}{extension}"
-
     file_path = destination_folder / unique_filename
 
-    # -----------------------------
-    # Save file
-    # -----------------------------
+    save_uploaded_file(file, file_path)
 
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    metadata = {}
 
-    # -----------------------------
-    # Return response
-    # -----------------------------
+    if media_type == "image":
+        metadata = extract_image_metadata(str(file_path))
 
     return {
-        "message": "File uploaded successfully!",
-        "original_filename": file.filename,
-        "stored_filename": unique_filename,
-        "content_type": file.content_type,
-        "media_type": media_type,
-        "saved_to": str(file_path)
-    }
+    "message": "File uploaded successfully!",
+    "original_filename": file.filename,
+    "stored_filename": unique_filename,
+    "content_type": file.content_type,
+    "media_type": media_type,
+    "saved_to": str(file_path),
+    "metadata": metadata
+}
