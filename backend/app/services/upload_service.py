@@ -1,8 +1,10 @@
 from pathlib import Path
+from app.schemas.upload_schema import UploadResponse, ImageMetadata
 import shutil
 import uuid
 from app.services.metadata_service import extract_image_metadata
 from fastapi import UploadFile
+from app.services.analysis_service import analyze_media
 
 from app.core.config import (
     SUPPORTED_IMAGE_TYPES,
@@ -36,8 +38,8 @@ def save_uploaded_file(file: UploadFile, destination: Path) -> None:
     with open(destination, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-def process_uploaded_media(file: UploadFile):
-
+def process_uploaded_media(file: UploadFile) -> UploadResponse:
+    
     media_type = detect_media_type(file.content_type)
 
     unique_filename = generate_unique_filename(file.filename)
@@ -48,17 +50,21 @@ def process_uploaded_media(file: UploadFile):
 
     save_uploaded_file(file, file_path)
 
-    metadata = {}
+    metadata = extract_image_metadata(str(file_path))
+
+    analysis_result = analyze_media(file_path, media_type)
+
+    image_metadata = None
 
     if media_type == "image":
-        metadata = extract_image_metadata(str(file_path))
+        image_metadata = ImageMetadata(**metadata)
 
-    return {
-    "message": "File uploaded successfully!",
-    "original_filename": file.filename,
-    "stored_filename": unique_filename,
-    "content_type": file.content_type,
-    "media_type": media_type,
-    "saved_to": str(file_path),
-    "metadata": metadata
-}
+    return UploadResponse(
+    message="File uploaded successfully!",
+    original_filename=file.filename,
+    stored_filename=unique_filename,
+    content_type=file.content_type,
+    media_type=media_type,
+    saved_to=str(file_path),
+    metadata=image_metadata
+)
