@@ -1,11 +1,15 @@
 from pathlib import Path
 
+from app.schemas.analysis_schema import AnalysisResponse
 
-def analyze_media(file_path: Path, media_type: str) -> dict:
-    print(f"Analyzing {media_type}: {file_path}")
 
-    return {
-        "status": "Analysis not implemented yet.",
-        "media_type": media_type,
-        "file_path": str(file_path)
-    }
+def analyze_media(file_path: Path, media_type: str) -> AnalysisResponse:
+
+    return AnalysisResponse(
+        status="Pending",
+        media_type=media_type,
+        prediction=None,
+        confidence=None,
+        model_name=None,
+        explanation="AI model not integrated yet."
+    )
