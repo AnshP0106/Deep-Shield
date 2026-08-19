@@ -1,3 +1,7 @@
+import torch
+import timm
+
+
 class ModelManager:
     """
     Responsible for loading and providing AI models.
@@ -5,33 +9,26 @@ class ModelManager:
 
     def __init__(self):
         self.image_model = None
-        self.video_model = None
-        self.audio_model = None
+        self.device = torch.device(
+            "cuda" if torch.cuda.is_available() else "cpu"
+        )
 
     def load_models(self):
-        """
-        Placeholder for loading AI models.
-        """
+        print(f"Using device: {self.device}")
 
-        print("Loading Image Model...")
-        self.image_model = "Image Model Loaded"
+        print("Loading Xception model...")
 
-        print("Loading Video Model...")
-        self.video_model = "Video Model Loaded"
+        self.image_model = timm.create_model(
+            "xception",
+            pretrained=True
+        )
 
-        print("Loading Audio Model...")
-        self.audio_model = "Audio Model Loaded"
+        self.image_model = self.image_model.to(self.device)
+        self.image_model.eval()
 
-        print("All AI models loaded successfully!")
+        print("Xception model loaded successfully!")
 
     def get_image_model(self):
         return self.image_model
-
-    def get_video_model(self):
-        return self.video_model
-
-    def get_audio_model(self):
-        return self.audio_model
-
 
 model_manager = ModelManager()
