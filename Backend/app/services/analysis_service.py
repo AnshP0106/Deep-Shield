@@ -1,27 +1,33 @@
 from pathlib import Path
 
-from app.detectors.audio_detector import analyze_audio
-from app.detectors.image_detector import analyze_image
-from app.detectors.video_detector import analyze_video
 from app.schemas.analysis_schema import AnalysisResponse
+from app.detectors.image_detector import image_detector
 
 
-def analyze_media(file_path: Path, media_type: str) -> AnalysisResponse:
-    """
-    Routes uploaded media to the correct AI detector.
-    """
+def analyze_media(
+    file_path: Path,
+    media_type: str
+) -> AnalysisResponse:
 
     if media_type == "image":
-        return analyze_image(file_path)
 
-    if media_type == "video":
-        return analyze_video(file_path)
+        result = image_detector.predict(file_path)
 
-    if media_type == "audio":
-        return analyze_audio(file_path)
+        return AnalysisResponse(
+            media_type=media_type,
+            result=result["label"],
+            confidence=result["confidence"],
+            details={
+                "real_probability": result["real_probability"],
+                "fake_probability": result["fake_probability"]
+            }
+        )
 
     return AnalysisResponse(
-        status="Failed",
         media_type=media_type,
-        explanation="Unsupported media type."
+        result="NOT_ANALYZED",
+        confidence=0.0,
+        details={
+            "message": f"{media_type} analysis is not implemented yet."
+        }
     )

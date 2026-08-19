@@ -1,18 +1,25 @@
+from pathlib import Path
+
 from fastapi import APIRouter, UploadFile, File
 
 from app.services.upload_service import process_uploaded_media
-from app.schemas.upload_schema import UploadResponse
+from app.services.analysis_service import analyze_media
+
 
 router = APIRouter()
 
 
-@router.get("/upload/test")
-def test_upload_router():
-    return {
-        "message": "Upload router is working successfully!"
-    }
-
-
-@router.post("/upload", response_model=UploadResponse)
+@router.post("/upload")
 def upload_media(file: UploadFile = File(...)):
-    return process_uploaded_media(file)
+
+    upload_result = process_uploaded_media(file)
+
+    analysis_result = analyze_media(
+        file_path=Path(upload_result.saved_to),
+        media_type=upload_result.media_type
+    )
+
+    return {
+        "upload": upload_result,
+        "analysis": analysis_result
+    }

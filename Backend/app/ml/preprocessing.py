@@ -4,7 +4,7 @@ import torch
 from torchvision import transforms
 
 
-IMAGE_SIZE = 299
+IMAGE_SIZE = 256
 
 
 image_transform = transforms.Compose([

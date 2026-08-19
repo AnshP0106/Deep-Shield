@@ -25,3 +25,8 @@ Backend/uploads/audio/*
 # OS files
 .DS_Store
 Thumbs.db
+
+# AI model weights
+Backend/models/weights/*.pth
+Backend/models/weights/*.pt
+Backend/models/weights/*.ckpt
