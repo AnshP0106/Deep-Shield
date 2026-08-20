@@ -11,15 +11,15 @@ image_transform = transforms.Compose([
     transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
     transforms.ToTensor(),
     transforms.Normalize(
-        mean=[0.485, 0.456, 0.406],
-        std=[0.229, 0.224, 0.225]
+        mean=[0.5, 0.5, 0.5],
+        std=[0.5, 0.5, 0.5]
     )
 ])
 
 
 def preprocess_image(image: Image.Image) -> torch.Tensor:
     """
-    Prepares an image for Xception inference.
+    Prepares a face image for DeepfakeBench Xception inference.
     """
 
     image = image.convert("RGB")
@@ -27,5 +27,7 @@ def preprocess_image(image: Image.Image) -> torch.Tensor:
     tensor = image_transform(image)
 
     tensor = tensor.unsqueeze(0)
+
+    print("Input tensor shape:", tensor.shape)
 
     return tensor

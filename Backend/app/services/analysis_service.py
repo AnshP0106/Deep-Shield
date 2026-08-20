@@ -15,11 +15,12 @@ def analyze_media(
 
         return AnalysisResponse(
             media_type=media_type,
-            result=result["label"],
+            result=result["prediction"],
             confidence=result["confidence"],
             details={
                 "real_probability": result["real_probability"],
-                "fake_probability": result["fake_probability"]
+                "fake_probability": result["fake_probability"],
+                "face_detected": result["face_detected"]
             }
         )
 
