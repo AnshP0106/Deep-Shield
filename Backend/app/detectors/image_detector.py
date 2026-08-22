@@ -8,11 +8,13 @@ from PIL import Image
 from app.ml.preprocessing import preprocess_image
 from app.managers.model_manager import model_manager
 from app.detectors.yunet_detector import yunet_detector
+from app.ml.gradcam import GradCAM
 
 from app.utils.risk_scoring import (
     calculate_risk_level,
     calculate_overall_risk
 )
+
 
 class ImageDetector:
 
@@ -23,6 +25,9 @@ class ImageDetector:
         # =====================================================
 
         self.device = model_manager.device
+
+        # Grad-CAM will be initialized lazily
+        self.gradcam = None
 
         # =====================================================
         # HAAR FALLBACK DETECTORS
@@ -110,6 +115,74 @@ class ImageDetector:
         )
 
     # =========================================================
+    # GRAD-CAM INITIALIZATION
+    # =========================================================
+
+    def _initialize_gradcam(self):
+
+        if self.gradcam is not None:
+            return
+
+        model = model_manager.get_image_model()
+
+        if model is None:
+
+            raise RuntimeError(
+                "Image model is not loaded."
+            )
+
+        # DeepfakeXception wrapper
+        #
+        # The actual Xception network
+        # is inside model.model.
+        #
+        # conv4 was verified from the
+        # model architecture.
+
+        target_layer = model.model.conv4
+
+        self.gradcam = GradCAM(
+            model=model,
+            target_layer=target_layer
+        )
+
+        print(
+            "Grad-CAM initialized successfully!"
+        )
+
+        print(
+            "Grad-CAM target layer: "
+            "model.model.conv4"
+        )
+
+    # =========================================================
+    # GENERATE GRAD-CAM
+    # =========================================================
+
+    def generate_gradcam(
+        self,
+        face_image: Image.Image,
+        target_class: int
+    ):
+
+        self._initialize_gradcam()
+
+        input_tensor = (
+            preprocess_image(
+                face_image
+            ).to(
+                self.device
+            )
+        )
+
+        cam = self.gradcam.generate(
+            input_tensor=input_tensor,
+            target_class=target_class
+        )
+
+        return cam
+
+    # =========================================================
     # ROTATE IMAGE
     # =========================================================
 
@@ -154,13 +227,8 @@ class ImageDetector:
 
         x, y, w, h = bbox
 
-        center_x = (
-            img_width / 2.0
-        )
-
-        center_y = (
-            img_height / 2.0
-        )
+        center_x = img_width / 2.0
+        center_y = img_height / 2.0
 
         corners = np.array(
             [
@@ -289,17 +357,10 @@ class ImageDetector:
 
         if len(yunet_faces) > 0:
 
-            # Select the face with the
-            # highest confidence
             best_face = max(
                 yunet_faces,
                 key=lambda face: face[-1]
             )
-
-            # YuNet format:
-            #
-            # [x, y, width, height,
-            #  landmarks..., confidence]
 
             x, y, width, height = (
                 best_face[:4]
@@ -451,7 +512,7 @@ class ImageDetector:
         detection_type = "none"
 
         # =====================================================
-        # 2A. HAAR FRONTAL DETECTION
+        # HAAR FRONTAL DETECTION
         # =====================================================
 
         frontal_detected = (
@@ -476,7 +537,7 @@ class ImageDetector:
             )
 
         # =====================================================
-        # 2B. ENHANCED HAAR FRONTAL
+        # ENHANCED HAAR FRONTAL
         # =====================================================
 
         if len(faces) == 0:
@@ -503,7 +564,7 @@ class ImageDetector:
                 )
 
         # =====================================================
-        # 2C. HAAR PROFILE DETECTION
+        # HAAR PROFILE DETECTION
         # =====================================================
 
         if len(faces) == 0:
@@ -568,7 +629,6 @@ class ImageDetector:
                             bh
                         ) in detected:
 
-                            # Undo horizontal flip
                             if is_flipped:
 
                                 bx = (
@@ -715,7 +775,8 @@ class ImageDetector:
         return Image.fromarray(
             face_crop
         )
-        # =========================================================
+
+    # =========================================================
     # MULTI-FACE DEEPFAKE ANALYSIS
     # =========================================================
 
@@ -779,6 +840,12 @@ class ImageDetector:
             model_manager
             .get_image_model()
         )
+
+        if model is None:
+
+            raise RuntimeError(
+                "Image model is not loaded."
+            )
 
         # =====================================================
         # 5. STORE INDIVIDUAL RESULTS
@@ -913,6 +980,11 @@ class ImageDetector:
                 )
             )
 
+            print(
+                "Input tensor shape:",
+                image_tensor.shape
+            )
+
             # =================================================
             # XCEPTION INFERENCE
             # =================================================
@@ -964,9 +1036,86 @@ class ImageDetector:
                 confidence = (
                     real_probability
                 )
+
             confidence_percentage = float(
                 confidence * 100
             )
+
+            # =================================================
+            # GRAD-CAM TARGET CLASS
+            # =================================================
+
+            target_class = (
+                1
+                if prediction == "FAKE"
+                else 0
+            )
+
+            # =================================================
+            # GENERATE GRAD-CAM
+            # =================================================
+
+            try:
+
+                cam = self.generate_gradcam(
+                    face_image=face_pil,
+                    target_class=target_class
+                )
+
+                print(
+                    f"Face {index}: "
+                    "Grad-CAM generated successfully."
+                )
+
+            except Exception as e:
+
+                print(
+                    f"Face {index}: "
+                    f"Grad-CAM failed: {e}"
+                )
+
+                cam = None
+
+            # =================================================
+            # SAVE GRAD-CAM OVERLAY
+            # =================================================
+
+            if cam is not None:
+
+                try:
+
+                    overlay = self.gradcam.overlay(
+                        face_crop,
+                        cam,
+                        alpha=0.45
+                    )
+
+                    gradcam_filename = (
+                        f"debug_face_{index}_gradcam.jpg"
+                    )
+
+                    cv2.imwrite(
+                        gradcam_filename,
+                        overlay
+                    )
+
+                    print(
+                        f"Face {index}: "
+                        f"Grad-CAM saved as "
+                        f"{gradcam_filename}"
+                    )
+
+                except Exception as e:
+
+                    print(
+                        f"Face {index}: "
+                        f"Could not save Grad-CAM "
+                        f"overlay: {e}"
+                    )
+
+            # =================================================
+            # RISK LEVEL
+            # =================================================
 
             risk_level = calculate_risk_level(
                 prediction,
@@ -978,6 +1127,7 @@ class ImageDetector:
             # =================================================
 
             result = {
+
                 "face_id": index,
 
                 "x": x,
@@ -987,7 +1137,9 @@ class ImageDetector:
                 "height": height,
 
                 "detection_confidence": round(
-                    float(detection_confidence) * 100,
+                    float(
+                        detection_confidence
+                    ) * 100,
                     2
                 ),
 
@@ -1008,7 +1160,11 @@ class ImageDetector:
                     2
                 ),
 
-                "risk_level": risk_level
+                "risk_level": risk_level,
+
+                "gradcam_generated": (
+                    cam is not None
+                )
             }
 
             face_results.append(
@@ -1117,7 +1273,9 @@ class ImageDetector:
 
             "confidence":
                 round(
-                    float(overall_confidence),
+                    float(
+                        overall_confidence
+                    ),
                     2
                 ),
 
@@ -1159,8 +1317,9 @@ class ImageDetector:
         }
 
         return result
+
     # =========================================================
-    # DEEPFAKE PREDICTION
+    # SINGLE-FACE DEEPFAKE PREDICTION
     # =========================================================
 
     def predict(
@@ -1215,6 +1374,12 @@ class ImageDetector:
             model_manager
             .get_image_model()
         )
+
+        if model is None:
+
+            raise RuntimeError(
+                "Image model is not loaded."
+            )
 
         # =====================================================
         # 4. RUN INFERENCE
@@ -1273,20 +1438,30 @@ class ImageDetector:
         # =====================================================
 
         return {
-            "prediction": prediction,
-            "confidence": round(
-                confidence * 100,
-                2
-            ),
-            "real_probability": round(
-                real_probability * 100,
-                2
-            ),
-            "fake_probability": round(
-                fake_probability * 100,
-                2
-            ),
-            "face_detected": True
+
+            "prediction":
+                prediction,
+
+            "confidence":
+                round(
+                    confidence * 100,
+                    2
+                ),
+
+            "real_probability":
+                round(
+                    real_probability * 100,
+                    2
+                ),
+
+            "fake_probability":
+                round(
+                    fake_probability * 100,
+                    2
+                ),
+
+            "face_detected":
+                True
         }
 
 
