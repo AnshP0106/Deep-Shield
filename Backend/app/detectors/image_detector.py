@@ -15,8 +15,162 @@ from app.utils.risk_scoring import (
     calculate_overall_risk
 )
 
+def calculate_overall_risk(face_results):
+
+    if not face_results:
+        return {
+            "risk_score": 0.0,
+            "risk_level": "VERY_LOW",
+            "reason": "No faces were detected."
+        }
+
+    total_faces = len(face_results)
+
+    # ---------------------------------------------------------
+    # Strong fake faces
+    # ---------------------------------------------------------
+
+    strong_fake_faces = [
+        face
+        for face in face_results
+        if (
+            face["prediction"] == "FAKE"
+            and face["fake_probability"] >= 75.0
+        )
+    ]
+
+    # ---------------------------------------------------------
+    # Uncertain faces
+    # ---------------------------------------------------------
+
+    uncertain_faces = [
+        face
+        for face in face_results
+        if face["prediction"] == "UNCERTAIN"
+    ]
+
+    # ---------------------------------------------------------
+    # Fake face ratio
+    # ---------------------------------------------------------
+
+    fake_ratio = (
+        len(strong_fake_faces)
+        / total_faces
+    )
+
+    # ---------------------------------------------------------
+    # Average fake probability
+    # ---------------------------------------------------------
+
+    if strong_fake_faces:
+
+        average_fake_probability = sum(
+            face["fake_probability"]
+            for face in strong_fake_faces
+        ) / len(strong_fake_faces)
+
+    else:
+
+        average_fake_probability = 0.0
+
+    # ---------------------------------------------------------
+    # Base risk score
+    # ---------------------------------------------------------
+
+    risk_score = (
+        fake_ratio * 60
+        +
+        (average_fake_probability / 100) * 40
+    )
+
+    # ---------------------------------------------------------
+    # Uncertainty contribution
+    # ---------------------------------------------------------
+
+    uncertainty_ratio = (
+        len(uncertain_faces)
+        / total_faces
+    )
+
+    risk_score += (
+        uncertainty_ratio * 15
+    )
+
+    # ---------------------------------------------------------
+    # Clamp score between 0 and 100
+    # ---------------------------------------------------------
+
+    risk_score = min(
+        100.0,
+        max(
+            0.0,
+            risk_score
+        )
+    )
+
+    # ---------------------------------------------------------
+    # Risk level
+    # ---------------------------------------------------------
+
+    if risk_score >= 80:
+
+        risk_level = "VERY_HIGH"
+
+    elif risk_score >= 60:
+
+        risk_level = "HIGH"
+
+    elif risk_score >= 35:
+
+        risk_level = "MODERATE"
+
+    elif risk_score >= 15:
+
+        risk_level = "LOW"
+
+    else:
+
+        risk_level = "VERY_LOW"
+
+    # ---------------------------------------------------------
+    # Explanation
+    # ---------------------------------------------------------
+
+    if len(strong_fake_faces) > 0:
+
+        reason = (
+            f"{len(strong_fake_faces)} face(s) produced "
+            f"strong evidence of manipulation."
+        )
+
+    elif len(uncertain_faces) > 0:
+
+        reason = (
+            f"{len(uncertain_faces)} face(s) produced "
+            f"uncertain model predictions."
+        )
+
+    else:
+
+        reason = (
+            "No strong evidence of facial manipulation "
+            "was detected."
+        )
+
+    return {
+        "risk_score": round(
+            risk_score,
+            2
+        ),
+        "risk_level": risk_level,
+        "reason": reason
+    }
 
 class ImageDetector:
+
+    FAKE_THRESHOLD = 0.75
+    REAL_THRESHOLD = 0.75
+    UNCERTAIN_THRESHOLD = 0.60
 
     def __init__(self):
 
@@ -114,6 +268,40 @@ class ImageDetector:
             tileGridSize=(8, 8)
         )
 
+    def classify_face_result(
+    self,
+    real_probability,
+    fake_probability
+    ):
+        if fake_probability >= self.FAKE_THRESHOLD:
+            return "FAKE"
+
+        if real_probability >= self.REAL_THRESHOLD:
+            return "REAL"
+
+        return "UNCERTAIN"
+
+    def calculate_face_risk(
+    self,
+    real_probability,
+    fake_probability
+    ):
+        fake_score = fake_probability * 100
+
+        if fake_score >= 85:
+            return "VERY_HIGH"
+
+        if fake_score >= 75:
+            return "HIGH"
+
+        if fake_score >= 60:
+            return "MODERATE"
+
+        if fake_score >= 40:
+            return "LOW"
+
+        return "VERY_LOW"
+    
     # =========================================================
     # GRAD-CAM INITIALIZATION
     # =========================================================
@@ -1017,23 +1205,26 @@ class ImageDetector:
             # =================================================
             # DETERMINE RESULT
             # =================================================
-
-            if (
-                fake_probability
-                > real_probability
-            ):
+            #
+            # Strong evidence is required before calling a face
+            # FAKE or REAL. Predictions in the middle are marked
+            # UNCERTAIN instead of forcing a binary decision.
+            #
+            if fake_probability >= self.FAKE_THRESHOLD:
 
                 prediction = "FAKE"
+                confidence = fake_probability
 
-                confidence = (
-                    fake_probability
-                )
+            elif real_probability >= self.REAL_THRESHOLD:
+
+                prediction = "REAL"
+                confidence = real_probability
 
             else:
 
-                prediction = "REAL"
-
-                confidence = (
+                prediction = "UNCERTAIN"
+                confidence = max(
+                    fake_probability,
                     real_probability
                 )
 
@@ -1080,6 +1271,8 @@ class ImageDetector:
             # SAVE GRAD-CAM OVERLAY
             # =================================================
 
+            gradcam_path = None
+
             if cam is not None:
 
                 try:
@@ -1090,19 +1283,55 @@ class ImageDetector:
                         alpha=0.45
                     )
 
-                    gradcam_filename = (
-                        f"debug_face_{index}_gradcam.jpg"
+                    # ---------------------------------------------
+                    # Create Grad-CAM output directory
+                    # ---------------------------------------------
+
+                    gradcam_dir = Path(
+                        "outputs"
+                    ) / "gradcam"
+
+                    gradcam_dir.mkdir(
+                        parents=True,
+                        exist_ok=True
                     )
 
-                    cv2.imwrite(
-                        gradcam_filename,
+                    # ---------------------------------------------
+                    # Unique filename for this face
+                    # ---------------------------------------------
+
+                    gradcam_filename = (
+                        f"face_{index}_gradcam.jpg"
+                    )
+
+                    gradcam_file = (
+                        gradcam_dir /
+                        gradcam_filename
+                    )
+
+                    # ---------------------------------------------
+                    # Save image
+                    # ---------------------------------------------
+
+                    success = cv2.imwrite(
+                        str(gradcam_file),
                         overlay
                     )
 
+                    if not success:
+
+                        raise RuntimeError(
+                            "cv2.imwrite() failed."
+                        )
+
+                    gradcam_path = str(
+                        gradcam_file
+                    ).replace("\\", "/")
+
                     print(
                         f"Face {index}: "
-                        f"Grad-CAM saved as "
-                        f"{gradcam_filename}"
+                        f"Grad-CAM saved to "
+                        f"{gradcam_path}"
                     )
 
                 except Exception as e:
@@ -1113,6 +1342,7 @@ class ImageDetector:
                         f"overlay: {e}"
                     )
 
+                    gradcam_path = None
             # =================================================
             # RISK LEVEL
             # =================================================
@@ -1164,7 +1394,10 @@ class ImageDetector:
 
                 "gradcam_generated": (
                     cam is not None
-                )
+                ),
+
+                "gradcam_path": 
+                    gradcam_path,
             }
 
             face_results.append(
@@ -1209,8 +1442,40 @@ class ImageDetector:
         uncertain_faces = [
             face
             for face in face_results
-            if face["risk_level"] == "UNCERTAIN"
+            if face["prediction"] == "UNCERTAIN"
         ]
+
+        strong_fake_faces = [
+        face
+        for face in fake_faces
+        if face["fake_probability"] >= 75.0
+        ]
+
+        fake_count = len(fake_faces)
+        real_count = len(real_faces)
+        uncertain_count = len(uncertain_faces)
+        strong_fake_count = len(strong_fake_faces)
+
+        overall_risk = calculate_overall_risk(
+        face_results
+        )   
+
+        # -----------------------------------------------------
+        # Strong fake evidence
+        # -----------------------------------------------------
+        # Only a face with >= 75% fake probability is considered
+        # strong enough to make the whole image LIKELY_FAKE.
+
+        strong_fake_faces = [
+            face
+            for face in fake_faces
+            if face["fake_probability"] >= 75.0
+        ]
+
+        fake_count = len(fake_faces)
+        real_count = len(real_faces)
+        uncertain_count = len(uncertain_faces)
+        strong_fake_count = len(strong_fake_faces)
 
         # =====================================================
         # OVERALL RISK ENGINE
@@ -1235,21 +1500,33 @@ class ImageDetector:
             overall_risk["reason"]
         )
 
-        # -----------------------------------------------------
-        # Overall prediction
-        # -----------------------------------------------------
+        # =====================================================
+        # OVERALL INTERPRETATION
+        # =====================================================
 
-        if len(fake_faces) > 0:
+        if strong_fake_count > 0:
 
-            overall_prediction = "FAKE"
+            overall_prediction = "LIKELY_FAKE"
 
-        elif len(uncertain_faces) > 0:
+        elif uncertain_count > 0:
 
             overall_prediction = "UNCERTAIN"
 
         else:
 
-            overall_prediction = "REAL"
+            overall_prediction = "LIKELY_REAL"
+
+        print("========================================")
+        print("OVERALL IMAGE ANALYSIS")
+        print("========================================")
+        print("Total faces:", len(face_results))
+        print("Real faces:", real_count)
+        print("Fake faces:", fake_count)
+        print("Uncertain faces:", uncertain_count)
+        print("Strong fake faces:", strong_fake_count)
+        print("Overall result:", overall_prediction)
+        print("Overall risk:", overall_risk["risk_level"])
+        print("========================================")
 
         # -----------------------------------------------------
         # Overall confidence
@@ -1307,6 +1584,9 @@ class ImageDetector:
 
             "uncertain_face_count":
                 len(uncertain_faces),
+
+            "strong_fake_face_count":
+                len(strong_fake_faces),
 
             # =============================================
             # Individual Face Results
@@ -1414,22 +1694,21 @@ class ImageDetector:
         # 6. DETERMINE PREDICTION
         # =====================================================
 
-        if (
-            fake_probability
-            > real_probability
-        ):
+        if fake_probability >= self.FAKE_THRESHOLD:
 
             prediction = "FAKE"
+            confidence = fake_probability
 
-            confidence = (
-                fake_probability
-            )
+        elif real_probability >= self.REAL_THRESHOLD:
+
+            prediction = "REAL"
+            confidence = real_probability
 
         else:
 
-            prediction = "REAL"
-
-            confidence = (
+            prediction = "UNCERTAIN"
+            confidence = max(
+                fake_probability,
                 real_probability
             )
 
