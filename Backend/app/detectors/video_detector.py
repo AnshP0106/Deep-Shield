@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 import cv2
 import torch
@@ -228,7 +228,6 @@ class VideoDetector:
         self,
         frames
     ):
-        # Initialize a fresh IoUFaceTracker per call to prevent track leakage
         tracker = IoUFaceTracker(
             iou_threshold=0.35,
             max_lost_frames=5
@@ -285,7 +284,6 @@ class VideoDetector:
 
             # ---------------------------------------------
             # Run SCRFD Face Detection
-            # Returns: [{"bbox": [x, y, w, h], "confidence": float}]
             # ---------------------------------------------
 
             raw_detections = scrfd_detector.detect_faces(
@@ -757,9 +755,6 @@ class VideoDetector:
         """
         Combines individual face predictions across video frames
         into one overall visual verdict.
-
-        This method does NOT simply count REAL vs FAKE faces.
-        Strong FAKE predictions receive much greater weight.
         """
 
         print(
@@ -774,10 +769,6 @@ class VideoDetector:
             "========================================"
         )
 
-        # -----------------------------------------------------
-        # Evidence counters
-        # -----------------------------------------------------
-
         strong_fake_faces = []
         moderate_fake_faces = []
 
@@ -789,10 +780,6 @@ class VideoDetector:
         suspicious_timestamps = []
 
         total_faces_analyzed = 0
-
-        # -----------------------------------------------------
-        # Process every frame
-        # -----------------------------------------------------
 
         for frame_result in analyzed_frames:
 
@@ -822,10 +809,6 @@ class VideoDetector:
                     / 100.0
                 )
 
-                # =================================================
-                # STRONG FAKE
-                # =================================================
-
                 if (
                     prediction == "FAKE"
                     and
@@ -839,10 +822,6 @@ class VideoDetector:
                     suspicious_timestamps.append(
                         timestamp
                     )
-
-                # =================================================
-                # MODERATE FAKE
-                # =================================================
 
                 elif (
                     prediction == "FAKE"
@@ -858,10 +837,6 @@ class VideoDetector:
                         timestamp
                     )
 
-                # =================================================
-                # STRONG REAL
-                # =================================================
-
                 elif (
                     prediction == "REAL"
                     and
@@ -871,10 +846,6 @@ class VideoDetector:
                     strong_real_faces.append(
                         face
                     )
-
-                # =================================================
-                # MODERATE REAL
-                # =================================================
 
                 elif (
                     prediction == "REAL"
@@ -886,19 +857,11 @@ class VideoDetector:
                         face
                     )
 
-                # =================================================
-                # UNCERTAIN
-                # =================================================
-
                 else:
 
                     uncertain_faces.append(
                         face
                     )
-
-        # -----------------------------------------------------
-        # Remove duplicate timestamps
-        # -----------------------------------------------------
 
         suspicious_timestamps = sorted(
             list(
@@ -907,10 +870,6 @@ class VideoDetector:
                 )
             )
         )
-
-        # -----------------------------------------------------
-        # Evidence counts
-        # -----------------------------------------------------
 
         strong_fake_count = len(
             strong_fake_faces
@@ -967,10 +926,6 @@ class VideoDetector:
             suspicious_timestamps
         )
 
-        # =====================================================
-        # CALCULATE EVIDENCE SCORE
-        # =====================================================
-
         fake_score = (
             strong_fake_count * 3.0
             +
@@ -982,10 +937,6 @@ class VideoDetector:
             +
             moderate_real_count * 0.5
         )
-
-        # -----------------------------------------------------
-        # Avoid division by zero
-        # -----------------------------------------------------
 
         total_evidence = (
             fake_score
@@ -1005,14 +956,6 @@ class VideoDetector:
 
             visual_risk_score = 0.0
 
-        # =====================================================
-        # FINAL VISUAL VERDICT
-        # =====================================================
-
-        # -----------------------------------------------------
-        # Strong fake evidence
-        # -----------------------------------------------------
-
         if strong_fake_count >= 1:
 
             visual_result = (
@@ -1028,10 +971,6 @@ class VideoDetector:
                 "evidence was detected in "
                 "one or more video frames."
             )
-
-        # -----------------------------------------------------
-        # Multiple moderate fake detections
-        # -----------------------------------------------------
 
         elif moderate_fake_count >= 2:
 
@@ -1049,10 +988,6 @@ class VideoDetector:
                 "consistent with facial "
                 "manipulation."
             )
-
-        # -----------------------------------------------------
-        # Some suspicious but insufficient evidence
-        # -----------------------------------------------------
 
         elif (
             moderate_fake_count == 1
@@ -1077,10 +1012,6 @@ class VideoDetector:
                 "fake classification."
             )
 
-        # -----------------------------------------------------
-        # Mostly real
-        # -----------------------------------------------------
-
         else:
 
             visual_result = (
@@ -1096,10 +1027,6 @@ class VideoDetector:
                 "facial manipulation was "
                 "detected."
             )
-
-        # =====================================================
-        # RESULT
-        # =====================================================
 
         result = {
 
@@ -1189,10 +1116,6 @@ class VideoDetector:
         """
         Detects consecutive suspicious predictions across
         the video timeline.
-
-        Strong FAKE predictions occurring close together
-        are treated as a stronger signal than isolated
-        predictions.
         """
 
         print(
@@ -1206,10 +1129,6 @@ class VideoDetector:
         print(
             "========================================"
         )
-
-        # -----------------------------------------------------
-        # Build timeline of strongest prediction per frame
-        # -----------------------------------------------------
 
         timeline = []
 
@@ -1226,10 +1145,6 @@ class VideoDetector:
             if not faces:
                 continue
 
-            # -------------------------------------------------
-            # Select strongest fake evidence in this frame
-            # -------------------------------------------------
-
             strongest_fake = max(
                 faces,
                 key=lambda face:
@@ -1241,10 +1156,6 @@ class VideoDetector:
                     "fake_probability"
                 ]
             )
-
-            # -------------------------------------------------
-            # Determine frame status
-            # -------------------------------------------------
 
             if fake_probability >= 90:
 
@@ -1270,10 +1181,6 @@ class VideoDetector:
                     fake_probability
             })
 
-        # -----------------------------------------------------
-        # Find suspicious sequences
-        # -----------------------------------------------------
-
         suspicious_segments = []
 
         current_segment = []
@@ -1284,10 +1191,6 @@ class VideoDetector:
                 "STRONG_FAKE",
                 "MODERATE_FAKE"
             ):
-
-                # ---------------------------------------------
-                # Start new segment
-                # ---------------------------------------------
 
                 if not current_segment:
 
@@ -1308,11 +1211,6 @@ class VideoDetector:
                             "timestamp"
                         ]
                     )
-
-                    # -----------------------------------------
-                    # Frames are considered continuous if they
-                    # are within 1.5 seconds.
-                    # -----------------------------------------
 
                     if (
                         current_timestamp
@@ -1345,19 +1243,11 @@ class VideoDetector:
 
                     current_segment = []
 
-        # -----------------------------------------------------
-        # Save final segment
-        # -----------------------------------------------------
-
         if current_segment:
 
             suspicious_segments.append(
                 current_segment
             )
-
-        # =====================================================
-        # ANALYZE SEGMENTS
-        # =====================================================
 
         temporal_segments = []
 
@@ -1392,10 +1282,6 @@ class VideoDetector:
                 ]
                 for item in segment
             )
-
-            # -------------------------------------------------
-            # Determine segment strength
-            # -------------------------------------------------
 
             if (
                 frame_count >= 3
@@ -1458,10 +1344,6 @@ class VideoDetector:
                     strength
             })
 
-        # =====================================================
-        # TEMPORAL SCORE
-        # =====================================================
-
         temporal_score = 0.0
 
         for segment in temporal_segments:
@@ -1476,18 +1358,10 @@ class VideoDetector:
                 ]
             )
 
-            # -------------------------------------------------
-            # Base score from probability
-            # -------------------------------------------------
-
             segment_score = (
                 average_probability
                 / 100
             )
-
-            # -------------------------------------------------
-            # Consecutive-frame multiplier
-            # -------------------------------------------------
 
             if frame_count >= 3:
 
@@ -1503,10 +1377,6 @@ class VideoDetector:
 
             segment_score *= multiplier
 
-            # -------------------------------------------------
-            # Keep maximum contribution at 100
-            # -------------------------------------------------
-
             segment_score = min(
                 segment_score,
                 1.0
@@ -1518,10 +1388,6 @@ class VideoDetector:
             )
 
         temporal_score *= 100
-
-        # =====================================================
-        # TEMPORAL VERDICT
-        # =====================================================
 
         if temporal_score >= 85:
 
@@ -1546,10 +1412,6 @@ class VideoDetector:
             temporal_result = (
                 "NO_STRONG_TEMPORAL_EVIDENCE"
             )
-
-        # =====================================================
-        # PRINT RESULTS
-        # =====================================================
 
         print(
             "Temporal suspicious segments:",
@@ -1605,6 +1467,96 @@ class VideoDetector:
         }
 
     # =========================================================
+    # EVIDENCE FRAME ANNOTATION
+    # =========================================================
+
+    def annotate_evidence_frame(
+        self,
+        frame,
+        face_bbox,
+        timestamp,
+        face_id,
+        fake_probability,
+        strength
+    ):
+        """
+        Draws a high-contrast bounding box around the suspicious face and
+        overlays analysis metadata at the bottom with a semi-transparent HUD banner.
+        """
+        annotated = frame.copy()
+        img_h, img_w = annotated.shape[:2]
+
+        # Draw Face Bounding Box if valid
+        if face_bbox and len(face_bbox) == 4:
+            bx, by, bw, bh = face_bbox
+            x1 = max(0, min(int(bx), img_w - 1))
+            y1 = max(0, min(int(by), img_h - 1))
+            x2 = max(0, min(int(bx + bw), img_w - 1))
+            y2 = max(0, min(int(by + bh), img_h - 1))
+
+            if (x2 - x1) > 0 and (y2 - y1) > 0:
+                # Primary Red Box (BGR: 0, 0, 240) with black border outline for visibility
+                cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 0, 0), 4)
+                cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 0, 240), 2)
+
+                label = f"Face ID: {face_id}"
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                font_scale = 0.55
+                font_thickness = 1
+                (label_w, label_h), baseline = cv2.getTextSize(label, font, font_scale, font_thickness)
+                label_y1 = max(0, y1 - label_h - 8)
+                label_y2 = y1
+
+                # Label background tag
+                cv2.rectangle(annotated, (x1, label_y1), (x1 + label_w + 10, label_y2), (0, 0, 240), -1)
+                cv2.putText(
+                    annotated,
+                    label,
+                    (x1 + 5, label_y2 - 4),
+                    font,
+                    font_scale,
+                    (255, 255, 255),
+                    font_thickness,
+                    cv2.LINE_AA
+                )
+
+        # Bottom HUD Banner
+        banner_h = max(110, int(img_h * 0.16))
+        overlay = annotated.copy()
+        cv2.rectangle(overlay, (0, img_h - banner_h), (img_w, img_h), (15, 15, 15), -1)
+        cv2.addWeighted(overlay, 0.78, annotated, 0.22, 0, annotated)
+
+        # Highlight strip (Orange/Red)
+        cv2.line(annotated, (0, img_h - banner_h), (img_w, img_h - banner_h), (0, 70, 230), 2)
+
+        # Format Timestamp (mm:ss.s)
+        total_seconds = float(timestamp)
+        minutes = int(total_seconds // 60)
+        seconds = total_seconds % 60
+        formatted_time = f"{minutes:02d}:{seconds:04.1f}"
+
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.55
+        font_thickness = 1
+
+        # Text Lines
+        lines = [
+            ("DeepShield Visual Forensics", (0, 190, 255), 0.65, 2),
+            (f"Timestamp: {formatted_time} ({total_seconds:.2f}s)   |   Face ID: {face_id}", (240, 240, 240), 0.50, 1),
+            (f"Fake Probability: {fake_probability:.1f}%   |   Evidence: {strength}", (0, 90, 255), 0.52, 2)
+        ]
+
+        text_y = img_h - banner_h + 26
+        for text, color, scale, thick in lines:
+            # Shadow outline
+            cv2.putText(annotated, text, (20, text_y), font, scale, (0, 0, 0), thick + 2, cv2.LINE_AA)
+            # Fore text
+            cv2.putText(annotated, text, (20, text_y), font, scale, color, thick, cv2.LINE_AA)
+            text_y += 26
+
+        return annotated
+
+    # =========================================================
     # SUSPICIOUS FRAME EXTRACTION
     # =========================================================
 
@@ -1612,11 +1564,13 @@ class VideoDetector:
         self,
         video_path,
         suspicious_segments,
-        output_dir="uploads/video_evidence"
+        output_dir="uploads/video_evidence",
+        analyzed_frames=None
     ):
         """
-        Extracts representative evidence frames from detected suspicious segments
-        and saves them as JPEG files.
+        Extracts representative evidence frames from detected suspicious segments,
+        finds the most suspicious face associated with the segment, and saves both
+        raw and annotated JPEG evidence files.
         """
 
         print(
@@ -1665,6 +1619,27 @@ class VideoDetector:
             for seg_idx, segment in enumerate(suspicious_segments, start=1):
                 start_time = segment["start_time"]
                 end_time = segment["end_time"]
+                seg_strength = segment.get("strength", "UNKNOWN")
+
+                # -------------------------------------------------------------
+                # Identify the face with the strongest fake probability
+                # in analyzed frames within or adjacent to this segment
+                # -------------------------------------------------------------
+                best_face = None
+                best_face_time = None
+                highest_fake_prob = -1.0
+
+                if analyzed_frames:
+                    for f_res in analyzed_frames:
+                        f_time = f_res.get("timestamp", 0.0)
+                        # Check frames falling within [start_time - 0.25, end_time + 0.25]
+                        if (start_time - 0.25) <= f_time <= (end_time + 0.25):
+                            for face in f_res.get("faces", []):
+                                f_fake = face.get("fake_probability", 0.0)
+                                if f_fake > highest_fake_prob:
+                                    highest_fake_prob = f_fake
+                                    best_face = face
+                                    best_face_time = f_time
 
                 # Determine representative timestamp
                 if start_time != end_time:
@@ -1675,11 +1650,9 @@ class VideoDetector:
                 else:
                     representative_timestamp = start_time
 
-                # Validate timestamp range
                 if representative_timestamp < 0:
                     representative_timestamp = 0.0
 
-                # Compute target frame index clamped within total video frames
                 target_frame_index = int(
                     representative_timestamp * fps
                 )
@@ -1716,6 +1689,9 @@ class VideoDetector:
                     )
                     continue
 
+                # -------------------------------------------------------------
+                # 1. Save Raw Evidence Image
+                # -------------------------------------------------------------
                 filename = f"evidence_{seg_idx:03d}.jpg"
                 file_path = os.path.join(
                     output_dir,
@@ -1740,14 +1716,61 @@ class VideoDetector:
                     file_path
                 )
 
+                # -------------------------------------------------------------
+                # 2. Annotate and Save Annotated Evidence Image
+                # -------------------------------------------------------------
+                if best_face:
+                    face_id = best_face.get("face_id", 1)
+                    face_bbox = [
+                        best_face.get("x", 0),
+                        best_face.get("y", 0),
+                        best_face.get("width", 0),
+                        best_face.get("height", 0)
+                    ]
+                    face_fake_prob = best_face.get("fake_probability", segment.get("maximum_fake_probability", 0.0))
+                else:
+                    face_id = 1
+                    face_bbox = None
+                    face_fake_prob = segment.get("maximum_fake_probability", 0.0)
+
+                annotated_frame = self.annotate_evidence_frame(
+                    frame=frame,
+                    face_bbox=face_bbox,
+                    timestamp=representative_timestamp,
+                    face_id=face_id,
+                    fake_probability=face_fake_prob,
+                    strength=seg_strength
+                )
+
+                annotated_filename = f"evidence_{seg_idx:03d}_annotated.jpg"
+                annotated_file_path = os.path.join(
+                    output_dir,
+                    annotated_filename
+                )
+
+                cv2.imwrite(
+                    annotated_file_path,
+                    annotated_frame
+                )
+
+                print(
+                    "Saved annotated evidence frame:"
+                )
+                print(
+                    annotated_file_path
+                )
+
                 evidence_frames.append({
                     "evidence_id": seg_idx,
                     "timestamp": representative_timestamp,
                     "frame_index": target_frame_index,
                     "file_path": file_path,
+                    "annotated_file_path": annotated_file_path,
+                    "face_id": face_id,
+                    "fake_probability": face_fake_prob,
                     "average_fake_probability": segment["average_fake_probability"],
                     "maximum_fake_probability": segment["maximum_fake_probability"],
-                    "strength": segment["strength"]
+                    "strength": seg_strength
                 })
 
         finally:
@@ -1780,7 +1803,7 @@ class VideoDetector:
         3. Analyze face crops with Xception
         4. Aggregate video visual evidence
         5. Analyze temporal sequences
-        6. Extract suspicious representative evidence frames
+        6. Extract suspicious representative evidence frames (raw & annotated)
         """
         video_path = Path(video_path)
 
@@ -1800,7 +1823,8 @@ class VideoDetector:
         evidence_frames = self.extract_evidence_frames(
             video_path=video_path,
             suspicious_segments=temporal_evidence.get("suspicious_segments", []),
-            output_dir=evidence_output_dir
+            output_dir=evidence_output_dir,
+            analyzed_frames=analysis_results
         )
 
         return {

@@ -231,3 +231,9 @@ for result in analysis_results:
             f"{face['prediction']} "
             f"({face['confidence']}%)"
         )
+
+evidence_frames = video_detector.extract_evidence_frames(
+    video_path=video_path,
+    suspicious_segments=suspicious_segments,
+    analyzed_frames=analysis_results
+)

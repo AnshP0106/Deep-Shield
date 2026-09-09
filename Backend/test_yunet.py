@@ -57,6 +57,23 @@ print(
 )
 
 
-#Image Type | Confidence | Faces Detected |
-# 1. Nigga | 0.945 | 1
-# 2. AI | |
+"""
+Image Type | Confidence | Faces Detected |
+1. Nigga | 0.945 | 1
+2. AI | 0.929 | 1
+3. Side Profile | 0.914 | 1
+4. YuNet faces detected: 10
+Face 1: x=201, y=135, w=52, h=64, confidence=0.938
+Face 2: x=342, y=67, w=45, h=61, confidence=0.936
+Face 3: x=287, y=115, w=56, h=72, confidence=0.933
+Face 4: x=140, y=61, w=42, h=54, confidence=0.933
+Face 5: x=456, y=96, w=46, h=60, confidence=0.926
+Face 6: x=114, y=137, w=48, h=64, confidence=0.923
+Face 7: x=29, y=143, w=51, h=66, confidence=0.920
+Face 8: x=233, y=72, w=46, h=57, confidence=0.916
+Face 9: x=384, y=111, w=53, h=66, confidence=0.906
+Face 10: x=75, y=49, w=48, h=55, confidence=0.904
+
+5. No face | 0.000 | 0
+6. Modihh Ji | 0.917 | 1
+"""
