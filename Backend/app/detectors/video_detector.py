@@ -559,7 +559,6 @@ class VideoDetector:
                     y + height + margin_y
                 )
 
-                # Ensure non-degenerate dimensions
                 if (x2 - x1) <= 0 or (y2 - y1) <= 0:
 
                     print(
@@ -1480,13 +1479,14 @@ class VideoDetector:
         strength
     ):
         """
-        Draws a high-contrast bounding box around the suspicious face and
-        overlays analysis metadata at the bottom with a semi-transparent HUD banner.
+        Draws a high-contrast bounding box around the suspicious face (if found)
+        and overlays analysis metadata at the bottom with a semi-transparent HUD banner.
+        Handles both face-matched and non-face-matched frames.
         """
         annotated = frame.copy()
         img_h, img_w = annotated.shape[:2]
 
-        # Draw Face Bounding Box if valid
+        # Draw Face Bounding Box if a valid bounding box exists
         if face_bbox and len(face_bbox) == 4:
             bx, by, bw, bh = face_bbox
             x1 = max(0, min(int(bx), img_w - 1))
@@ -1495,11 +1495,10 @@ class VideoDetector:
             y2 = max(0, min(int(by + bh), img_h - 1))
 
             if (x2 - x1) > 0 and (y2 - y1) > 0:
-                # Primary Red Box (BGR: 0, 0, 240) with black border outline for visibility
                 cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 0, 0), 4)
                 cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 0, 240), 2)
 
-                label = f"Face ID: {face_id}"
+                label = f"Face ID: {face_id}" if face_id is not None else "Face"
                 font = cv2.FONT_HERSHEY_SIMPLEX
                 font_scale = 0.55
                 font_thickness = 1
@@ -1507,7 +1506,6 @@ class VideoDetector:
                 label_y1 = max(0, y1 - label_h - 8)
                 label_y2 = y1
 
-                # Label background tag
                 cv2.rectangle(annotated, (x1, label_y1), (x1 + label_w + 10, label_y2), (0, 0, 240), -1)
                 cv2.putText(
                     annotated,
@@ -1539,18 +1537,23 @@ class VideoDetector:
         font_scale = 0.55
         font_thickness = 1
 
-        # Text Lines
-        lines = [
-            ("DeepShield Visual Forensics", (0, 190, 255), 0.65, 2),
-            (f"Timestamp: {formatted_time} ({total_seconds:.2f}s)   |   Face ID: {face_id}", (240, 240, 240), 0.50, 1),
-            (f"Fake Probability: {fake_probability:.1f}%   |   Evidence: {strength}", (0, 90, 255), 0.52, 2)
-        ]
+        # Text Lines configuration
+        if face_bbox is not None and face_id is not None:
+            lines = [
+                ("DeepShield Visual Forensics", (0, 190, 255), 0.65, 2),
+                (f"Timestamp: {formatted_time} ({total_seconds:.2f}s)   |   Face ID: {face_id}", (240, 240, 240), 0.50, 1),
+                (f"Fake Probability: {fake_probability:.1f}%   |   Evidence: {strength}", (0, 90, 255), 0.52, 2)
+            ]
+        else:
+            lines = [
+                ("DeepShield Visual Forensics", (0, 190, 255), 0.65, 2),
+                (f"Timestamp: {formatted_time} ({total_seconds:.2f}s)   |   Face: No matching face found", (240, 240, 240), 0.50, 1),
+                (f"Evidence: {strength}", (0, 90, 255), 0.52, 2)
+            ]
 
         text_y = img_h - banner_h + 26
         for text, color, scale, thick in lines:
-            # Shadow outline
             cv2.putText(annotated, text, (20, text_y), font, scale, (0, 0, 0), thick + 2, cv2.LINE_AA)
-            # Fore text
             cv2.putText(annotated, text, (20, text_y), font, scale, color, thick, cv2.LINE_AA)
             text_y += 26
 
@@ -1569,8 +1572,8 @@ class VideoDetector:
     ):
         """
         Extracts representative evidence frames from detected suspicious segments,
-        finds the most suspicious face associated with the segment, and saves both
-        raw and annotated JPEG evidence files.
+        finds the closest analyzed frame and highest fake probability face, and
+        guarantees that every segment produces both a raw and an annotated JPEG evidence file.
         """
 
         print(
@@ -1621,27 +1624,7 @@ class VideoDetector:
                 end_time = segment["end_time"]
                 seg_strength = segment.get("strength", "UNKNOWN")
 
-                # -------------------------------------------------------------
-                # Identify the face with the strongest fake probability
-                # in analyzed frames within or adjacent to this segment
-                # -------------------------------------------------------------
-                best_face = None
-                best_face_time = None
-                highest_fake_prob = -1.0
-
-                if analyzed_frames:
-                    for f_res in analyzed_frames:
-                        f_time = f_res.get("timestamp", 0.0)
-                        # Check frames falling within [start_time - 0.25, end_time + 0.25]
-                        if (start_time - 0.25) <= f_time <= (end_time + 0.25):
-                            for face in f_res.get("faces", []):
-                                f_fake = face.get("fake_probability", 0.0)
-                                if f_fake > highest_fake_prob:
-                                    highest_fake_prob = f_fake
-                                    best_face = face
-                                    best_face_time = f_time
-
-                # Determine representative timestamp
+                # 1. Determine representative timestamp
                 if start_time != end_time:
                     representative_timestamp = round(
                         (start_time + end_time) / 2.0,
@@ -1653,6 +1636,34 @@ class VideoDetector:
                 if representative_timestamp < 0:
                     representative_timestamp = 0.0
 
+                # 2. Find closest analyzed frame & candidate face with highest fake_probability
+                best_face = None
+                face_id = None
+                face_bbox = None
+                face_fake_prob = segment.get("maximum_fake_probability", 0.0)
+
+                if analyzed_frames and len(analyzed_frames) > 0:
+                    closest_frame_result = min(
+                        analyzed_frames,
+                        key=lambda f_res: abs(f_res.get("timestamp", 0.0) - representative_timestamp)
+                    )
+
+                    frame_faces = closest_frame_result.get("faces", [])
+                    if frame_faces:
+                        best_face = max(
+                            frame_faces,
+                            key=lambda face: face.get("fake_probability", 0.0)
+                        )
+                        face_id = best_face.get("face_id")
+                        face_bbox = [
+                            best_face.get("x", 0),
+                            best_face.get("y", 0),
+                            best_face.get("width", 0),
+                            best_face.get("height", 0)
+                        ]
+                        face_fake_prob = best_face.get("fake_probability", face_fake_prob)
+
+                # 3. Seek to representative timestamp in video
                 target_frame_index = int(
                     representative_timestamp * fps
                 )
@@ -1671,7 +1682,7 @@ class VideoDetector:
 
                 success, frame = video.read()
 
-                # Fallback: Seek backwards slightly if reading near the end failed
+                # Fallback: Seek backwards if near video end
                 if (not success or frame is None) and target_frame_index > 0:
                     fallback_index = max(0, target_frame_index - 1)
                     video.set(
@@ -1689,9 +1700,7 @@ class VideoDetector:
                     )
                     continue
 
-                # -------------------------------------------------------------
-                # 1. Save Raw Evidence Image
-                # -------------------------------------------------------------
+                # 4. Save Raw Evidence Image
                 filename = f"evidence_{seg_idx:03d}.jpg"
                 file_path = os.path.join(
                     output_dir,
@@ -1716,23 +1725,7 @@ class VideoDetector:
                     file_path
                 )
 
-                # -------------------------------------------------------------
-                # 2. Annotate and Save Annotated Evidence Image
-                # -------------------------------------------------------------
-                if best_face:
-                    face_id = best_face.get("face_id", 1)
-                    face_bbox = [
-                        best_face.get("x", 0),
-                        best_face.get("y", 0),
-                        best_face.get("width", 0),
-                        best_face.get("height", 0)
-                    ]
-                    face_fake_prob = best_face.get("fake_probability", segment.get("maximum_fake_probability", 0.0))
-                else:
-                    face_id = 1
-                    face_bbox = None
-                    face_fake_prob = segment.get("maximum_fake_probability", 0.0)
-
+                # 5. Always Annotate and Save Annotated Evidence Image
                 annotated_frame = self.annotate_evidence_frame(
                     frame=frame,
                     face_bbox=face_bbox,
@@ -1753,6 +1746,9 @@ class VideoDetector:
                     annotated_frame
                 )
 
+                print(
+                    f"Evidence #{seg_idx} annotated successfully"
+                )
                 print(
                     "Saved annotated evidence frame:"
                 )
