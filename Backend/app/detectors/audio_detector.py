@@ -1,10 +1,9 @@
 from pathlib import Path
 import sys
+import wave
 
 import numpy as np
 import torch
-import soundfile as sf
-import torch.nn.functional as F
 
 from app.ml.aasist_model import AASISTModel
 
@@ -32,139 +31,207 @@ def get_aasist_model():
 
 
 # ============================================================
-# AUDIO LOADING
+# WAV LOADER
+# ============================================================
+
+def load_wav(file_path: Path):
+    """
+    Load an uncompressed WAV file without torchaudio/TorchCodec.
+
+    Returns:
+        waveform: torch.Tensor [1, samples]
+        sample_rate: int
+    """
+
+    with wave.open(str(file_path), "rb") as wav:
+
+        num_channels = wav.getnchannels()
+        sample_rate = wav.getframerate()
+        sample_width = wav.getsampwidth()
+        num_frames = wav.getnframes()
+
+        raw_audio = wav.readframes(num_frames)
+
+    # --------------------------------------------------------
+    # Convert PCM → numpy
+    # --------------------------------------------------------
+
+    if sample_width == 1:
+
+        audio = np.frombuffer(
+            raw_audio,
+            dtype=np.uint8
+        ).astype(np.float32)
+
+        audio = (audio - 128.0) / 128.0
+
+    elif sample_width == 2:
+
+        audio = np.frombuffer(
+            raw_audio,
+            dtype=np.int16
+        ).astype(np.float32)
+
+        audio /= 32768.0
+
+    elif sample_width == 3:
+
+        # 24-bit PCM
+        raw = np.frombuffer(
+            raw_audio,
+            dtype=np.uint8
+        ).reshape(-1, 3)
+
+        audio = (
+            raw[:, 0].astype(np.int32)
+            | (raw[:, 1].astype(np.int32) << 8)
+            | (raw[:, 2].astype(np.int32) << 16)
+        )
+
+        # Sign extension
+        audio = np.where(
+            audio & 0x800000,
+            audio - 0x1000000,
+            audio
+        )
+
+        audio = audio.astype(np.float32) / 8388608.0
+
+    elif sample_width == 4:
+
+        audio = np.frombuffer(
+            raw_audio,
+            dtype=np.int32
+        ).astype(np.float32)
+
+        audio /= 2147483648.0
+
+    else:
+
+        raise ValueError(
+            f"Unsupported WAV sample width: "
+            f"{sample_width} bytes"
+        )
+
+    # --------------------------------------------------------
+    # Stereo / multi-channel → mono
+    # --------------------------------------------------------
+
+    if num_channels > 1:
+
+        audio = audio.reshape(
+            -1,
+            num_channels
+        )
+
+        audio = np.mean(
+            audio,
+            axis=1
+        )
+
+    # --------------------------------------------------------
+    # Resample to 16 kHz
+    # --------------------------------------------------------
+
+    if sample_rate != TARGET_SAMPLE_RATE:
+
+        old_length = len(audio)
+
+        new_length = int(
+            old_length
+            * TARGET_SAMPLE_RATE
+            / sample_rate
+        )
+
+        old_indices = np.linspace(
+            0,
+            old_length - 1,
+            old_length
+        )
+
+        new_indices = np.linspace(
+            0,
+            old_length - 1,
+            new_length
+        )
+
+        audio = np.interp(
+            new_indices,
+            old_indices,
+            audio
+        ).astype(np.float32)
+
+        sample_rate = TARGET_SAMPLE_RATE
+
+    waveform = torch.from_numpy(
+        audio.astype(np.float32)
+    ).unsqueeze(0)
+
+    return waveform, sample_rate
+
+
+# ============================================================
+# AUDIO LOADER
 # ============================================================
 
 def load_audio(file_path):
     """
-    Load audio using SoundFile instead of torchaudio.
+    Load audio without using torchaudio/TorchCodec.
 
-    Output:
+    Currently supports WAV directly.
+
+    Returns:
         waveform: torch.Tensor [1, samples]
         sample_rate: int
-
-    Processing:
-        1. Load audio
-        2. Convert stereo -> mono
-        3. Convert to float32
-        4. Resample to 16 kHz
     """
 
     file_path = Path(file_path)
 
     if not file_path.exists():
+
         raise FileNotFoundError(
             f"Audio file not found: {file_path}"
         )
 
-    try:
-
-        # ----------------------------------------------------
-        # Load audio using SoundFile
-        # ----------------------------------------------------
-
-        audio, sample_rate = sf.read(
-            str(file_path),
-            dtype="float32",
-            always_2d=True
-        )
-
-    except Exception as e:
-
-        raise RuntimeError(
-            f"Unable to load audio file: {file_path}\n"
-            f"Original error: {type(e).__name__}: {e}"
-        ) from e
+    extension = file_path.suffix.lower()
 
     # --------------------------------------------------------
-    # SoundFile returns:
-    #
-    # [samples, channels]
-    #
-    # Convert to:
-    #
-    # [channels, samples]
+    # WAV
     # --------------------------------------------------------
 
-    waveform = torch.from_numpy(
-        audio.T.copy()
+    if extension == ".wav":
+
+        return load_wav(file_path)
+
+    # --------------------------------------------------------
+    # Other formats
+    # --------------------------------------------------------
+
+    raise RuntimeError(
+        f"Unsupported audio format: {extension}. "
+        f"For now, use WAV files for AASIST testing."
     )
-
-    # --------------------------------------------------------
-    # Convert stereo/multi-channel -> mono
-    # --------------------------------------------------------
-
-    if waveform.shape[0] > 1:
-
-        waveform = waveform.mean(
-            dim=0,
-            keepdim=True
-        )
-
-    # --------------------------------------------------------
-    # Ensure float32
-    # --------------------------------------------------------
-
-    waveform = waveform.float()
-
-    # --------------------------------------------------------
-    # Resample -> 16 kHz
-    #
-    # We use torch interpolation instead of
-    # torchaudio.transforms.Resample.
-    # --------------------------------------------------------
-
-    if sample_rate != TARGET_SAMPLE_RATE:
-
-        original_length = waveform.shape[-1]
-
-        new_length = int(
-            original_length
-            * TARGET_SAMPLE_RATE
-            / sample_rate
-        )
-
-        waveform = F.interpolate(
-            waveform.unsqueeze(0),
-            size=new_length,
-            mode="linear",
-            align_corners=False
-        ).squeeze(0)
-
-        sample_rate = TARGET_SAMPLE_RATE
-
-    return waveform, sample_rate
 
 
 # ============================================================
 # BASIC AUDIO FEATURES
 # ============================================================
 
-def calculate_audio_features(waveform, sample_rate):
-    """
-    Calculate basic audio statistics.
+def calculate_audio_features(
+    waveform,
+    sample_rate
+):
 
-    These features are currently metadata only.
+    audio = waveform.squeeze(0).numpy()
 
-    AASIST remains the actual deepfake classifier.
-    """
-
-    audio = waveform.squeeze(0).cpu().numpy()
-
-    # --------------------------------------------------------
     # RMS
-    # --------------------------------------------------------
-
     rms = np.sqrt(
         np.mean(
             np.square(audio)
         )
     )
 
-    # --------------------------------------------------------
-    # Zero Crossing Rate
-    # --------------------------------------------------------
-
+    # Zero crossing rate
     zero_crossings = np.sum(
         np.abs(
             np.diff(
@@ -178,21 +245,32 @@ def calculate_audio_features(waveform, sample_rate):
         / max(len(audio), 1)
     )
 
-    # --------------------------------------------------------
     # Duration
-    # --------------------------------------------------------
-
     duration = (
         len(audio)
         / sample_rate
     )
 
     return {
-        "duration_seconds": float(duration),
-        "sample_rate": int(sample_rate),
-        "num_samples": int(len(audio)),
-        "rms": float(rms),
-        "zero_crossing_rate": float(zcr),
+        "duration_seconds": float(
+            duration
+        ),
+
+        "sample_rate": int(
+            sample_rate
+        ),
+
+        "num_samples": int(
+            len(audio)
+        ),
+
+        "rms": float(
+            rms
+        ),
+
+        "zero_crossing_rate": float(
+            zcr
+        ),
     }
 
 
@@ -200,34 +278,40 @@ def calculate_audio_features(waveform, sample_rate):
 # AASIST INFERENCE
 # ============================================================
 
-def run_aasist(waveform, sample_rate):
-    """
-    Run AASIST-L inference.
-
-    AASISTModel.predict() handles the model-specific
-    preprocessing internally.
-
-    Returns:
-        classification
-        confidence
-        spoof_probability
-        bonafide_probability
-    """
+def run_aasist(
+    waveform,
+    sample_rate
+):
 
     model = get_aasist_model()
 
-    # Make sure waveform is mono
+    # --------------------------------------------------------
+    # Ensure mono
+    # --------------------------------------------------------
+
     if waveform.ndim == 2:
-        waveform = waveform.mean(dim=0)
+
+        waveform = waveform.mean(
+            dim=0
+        )
 
     waveform = waveform.float()
 
+    # --------------------------------------------------------
     # Add batch dimension
+    # --------------------------------------------------------
+
     waveform = waveform.unsqueeze(0)
 
-    # AASISTModel.predict() accepts waveform only
+    # --------------------------------------------------------
+    # AASIST
+    # --------------------------------------------------------
+
     with torch.no_grad():
-        result = model.predict(waveform)
+
+        result = model.predict(
+            waveform
+        )
 
     return result
 
@@ -255,13 +339,18 @@ def analyze_audio(file_path):
             file_path
         )
 
-        print("Audio loaded successfully")
+        print(
+            "Audio loaded successfully"
+        )
+
         print(
             f"sample_rate: {sample_rate}"
         )
+
         print(
             f"samples: {waveform.shape[-1]}"
         )
+
         print()
 
         # ----------------------------------------------------
@@ -297,10 +386,6 @@ def analyze_audio(file_path):
         )
 
         print()
-
-        # ----------------------------------------------------
-        # AASIST RESULT
-        # ----------------------------------------------------
 
         print("AASIST RESULT")
         print("-" * 60)
@@ -349,10 +434,6 @@ def analyze_audio(file_path):
 
         print("=" * 60)
 
-        # ----------------------------------------------------
-        # Final result
-        # ----------------------------------------------------
-
         return {
             "file": str(file_path),
 
@@ -362,11 +443,14 @@ def analyze_audio(file_path):
 
             "confidence": confidence,
 
-            "spoof_probability": spoof_probability,
+            "spoof_probability":
+                spoof_probability,
 
-            "bonafide_probability": bonafide_probability,
+            "bonafide_probability":
+                bonafide_probability,
 
-            "detector_status": "success",
+            "detector_status":
+                "success",
         }
 
     except Exception as e:
@@ -384,7 +468,8 @@ def analyze_audio(file_path):
         return {
             "file": str(file_path),
 
-            "detector_status": "failed",
+            "detector_status":
+                "failed",
 
             "error": str(e),
         }
@@ -400,7 +485,8 @@ if __name__ == "__main__":
 
         print(
             "Usage:\n"
-            "python -m app.detectors.audio_detector "
+            "python -m "
+            "app.detectors.audio_detector "
             "uploads/audio/test.wav"
         )
 
@@ -408,4 +494,6 @@ if __name__ == "__main__":
 
     audio_path = sys.argv[1]
 
-    analyze_audio(audio_path)
+    analyze_audio(
+        audio_path
+    )
