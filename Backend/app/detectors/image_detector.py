@@ -1,3 +1,4 @@
+import uuid
 from pathlib import Path
 
 import cv2
@@ -981,6 +982,8 @@ class ImageDetector:
             str(file_path)
         )
 
+        analysis_id = uuid.uuid4().hex
+
         if image is None:
 
             raise ValueError(
@@ -1272,46 +1275,26 @@ class ImageDetector:
             # =================================================
 
             gradcam_path = None
+            gradcam_url = None
 
             if cam is not None:
-
                 try:
-
                     overlay = self.gradcam.overlay(
                         face_crop,
                         cam,
                         alpha=0.45
                     )
 
-                    # ---------------------------------------------
-                    # Create Grad-CAM output directory
-                    # ---------------------------------------------
+                    # Anchor output directory to the Backend folder.
+                    backend_dir = Path(__file__).resolve().parents[2]
+                    gradcam_dir = backend_dir / "outputs" / "gradcam"
+                    gradcam_dir.mkdir(parents=True, exist_ok=True)
 
-                    gradcam_dir = Path(
-                        "outputs"
-                    ) / "gradcam"
-
-                    gradcam_dir.mkdir(
-                        parents=True,
-                        exist_ok=True
-                    )
-
-                    # ---------------------------------------------
-                    # Unique filename for this face
-                    # ---------------------------------------------
-
+                    # Unique per analysis and per face.
                     gradcam_filename = (
-                        f"face_{index}_gradcam.jpg"
+                        f"{analysis_id}_face_{index}_gradcam.jpg"
                     )
-
-                    gradcam_file = (
-                        gradcam_dir /
-                        gradcam_filename
-                    )
-
-                    # ---------------------------------------------
-                    # Save image
-                    # ---------------------------------------------
+                    gradcam_file = gradcam_dir / gradcam_filename
 
                     success = cv2.imwrite(
                         str(gradcam_file),
@@ -1319,30 +1302,28 @@ class ImageDetector:
                     )
 
                     if not success:
-
                         raise RuntimeError(
-                            "cv2.imwrite() failed."
+                            "Could not write Grad-CAM image."
                         )
 
-                    gradcam_path = str(
-                        gradcam_file
-                    ).replace("\\", "/")
+                    # Keep the local path for backend diagnostics.
+                    gradcam_path = str(gradcam_file)
+
+                    # This URL is safe to return to the frontend.
+                    gradcam_url = f"/outputs/gradcam/{gradcam_filename}"
 
                     print(
-                        f"Face {index}: "
-                        f"Grad-CAM saved to "
-                        f"{gradcam_path}"
+                        f"Face {index}: Grad-CAM saved to "
+                        f"{gradcam_file}"
                     )
 
                 except Exception as e:
-
                     print(
-                        f"Face {index}: "
-                        f"Could not save Grad-CAM "
-                        f"overlay: {e}"
+                        f"Face {index}: Could not save Grad-CAM: {e}"
                     )
-
                     gradcam_path = None
+                    gradcam_url = None
+
             # =================================================
             # RISK LEVEL
             # =================================================
@@ -1396,8 +1377,8 @@ class ImageDetector:
                     cam is not None
                 ),
 
-                "gradcam_path": 
-                    gradcam_path,
+                "gradcam_path": gradcam_path,
+                "gradcam_url": gradcam_url,
             }
 
             face_results.append(
