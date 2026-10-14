@@ -1,3 +1,4 @@
+
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -6,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.api.upload import router
+from app.api.chat import router as chat_router
 from app.managers.model_manager import model_manager
 
 
@@ -78,3 +80,4 @@ app.mount(
 # =========================================================
 
 app.include_router(router)
+app.include_router(chat_router)
